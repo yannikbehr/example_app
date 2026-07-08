@@ -79,10 +79,11 @@
   <div class="range">
     <label for="range">🗓 Time range
       <select id="range">
+        <option value="6h">6 hours</option>
+        <option value="1d">1 day</option>
+        <option value="2d">2 days</option>
         <option value="7d">7 days</option>
         <option value="30d" selected>30 days</option>
-        <option value="90d">90 days</option>
-        <option value="365d">1 year</option>
       </select>
     </label>
   </div>
@@ -107,7 +108,7 @@
 <script>
 const endpointFor = (duration) =>
   `https://tilde.geonet.org.nz/v3/data/envirosensor/RU001/lake-temperature/-/snapshot/-/latest/${duration}`;
-const RANGE_LABELS = {"7d":"7 days", "30d":"30 days", "90d":"90 days", "365d":"1 year"};
+const RANGE_LABELS = {"6h":"6 hours", "1d":"1 day", "2d":"2 days", "7d":"7 days", "30d":"30 days"};
 
 // --- Defensive parser: works regardless of exact JSON key names (v3/v4 tolerant) ---
 // Finds every array of observation-like objects (a parseable date field + a numeric field),
@@ -136,6 +137,9 @@ function collectSeries(node, out){
 }
 
 const fmt = new Intl.DateTimeFormat([], {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"});
+const tickFmt = (duration) => ["6h","1d"].includes(duration)
+  ? new Intl.DateTimeFormat([], {hour:"2-digit", minute:"2-digit"})
+  : new Intl.DateTimeFormat([], {day:"numeric", month:"short"});
 const setStatus = (msg, isErr) => {
   const el = document.getElementById("status");
   el.className = "status" + (isErr ? " err" : "");
@@ -201,7 +205,7 @@ async function load(duration){
           x:{type:"time"===undefined?"category":"category",
              ticks:{color:"#7fa0a2", maxTicksLimit:6, autoSkip:true,
                callback:function(val,idx){const d=this.getLabelForValue(val);
-                 return new Intl.DateTimeFormat([], {day:"numeric",month:"short"}).format(new Date(d));}},
+                 return tickFmt(duration).format(new Date(d));}},
              grid:{color:"rgba(28,58,64,.5)"}},
           y:{ticks:{color:"#7fa0a2", callback:v=>v+"°"}, grid:{color:"rgba(28,58,64,.5)"}}
         }
