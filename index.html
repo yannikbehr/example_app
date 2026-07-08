@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0c1a1d" />
+<title>Te Wai ā-moe — Lake Temperature</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0c1a1d; --panel:#102428; --line:#1c3a40;
+    --ink:#e8f1f0; --muted:#7fa0a2; --accent:#38e0c4; --warn:#f4a24b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(120% 90% at 50% -10%, #143036 0%, var(--bg) 55%);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:max(20px,env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+    max-width:640px;margin:0 auto;
+    display:flex;flex-direction:column;gap:20px;
+  }
+  header{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+  .eyebrow{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .sub{font-size:13px;color:var(--muted)}
+  .reading{display:flex;align-items:baseline;gap:10px}
+  .temp{
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:76px;line-height:.95;font-weight:600;
+    letter-spacing:-.02em;
+    background:linear-gradient(90deg,var(--accent),var(--warn));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    font-variant-numeric:tabular-nums;
+  }
+  .unit{font-size:26px;color:var(--muted);font-weight:500}
+  .updated{font-size:12px;color:var(--muted)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .chart-wrap{height:230px;position:relative}
+  .stats{display:flex;gap:10px}
+  .stat{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .stat .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-family:ui-monospace,monospace;font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+  .status{font-size:12px;color:var(--muted);text-align:center}
+  .status.err{color:var(--warn)}
+  footer{font-size:11px;color:var(--muted);text-align:center;line-height:1.5}
+  a{color:var(--accent);text-decoration:none}
+  .spinner{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;display:inline-block;vertical-align:-3px;animation:spin .8s linear infinite;margin-right:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <header>
+    <span class="eyebrow">Ruapehu Crater Lake · RU001</span>
+    <h1>Te Wai ā-moe</h1>
+    <span class="sub">Lake temperature — GeoNet envirosensor network</span>
+  </header>
+
+  <div>
+    <div class="reading">
+      <span class="temp" id="temp">—</span>
+      <span class="unit">°C</span>
+    </div>
+    <div class="updated" id="updated">&nbsp;</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">30-day min</div><div class="v" id="min">—</div></div>
+    <div class="stat"><div class="k">30-day max</div><div class="v" id="max">—</div></div>
+    <div class="stat"><div class="k">Samples</div><div class="v" id="count">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+
+  <div class="status" id="status"><span class="spinner"></span>Loading data…</div>
+
+  <footer>
+    Data: <a href="https://tilde.geonet.org.nz/">GeoNet Tilde API</a> · GNS Science / Earth Sciences New Zealand<br>
+    Times shown in your local timezone. Sampled every 10 min.
+  </footer>
+
+<script>
+const ENDPOINT = "https://tilde.geonet.org.nz/v3/data/envirosensor/RU001/lake-temperature/-/snapshot/-/latest/30d";
+
+// --- Defensive parser: works regardless of exact JSON key names (v3/v4 tolerant) ---
+// Finds every array of observation-like objects (a parseable date field + a numeric field),
+// then returns the richest one so the chart always has a clean single line.
+function looksLikeObs(arr){
+  if(!Array.isArray(arr) || !arr.length) return null;
+  const s = arr.find(x => x && typeof x === "object" && !Array.isArray(x));
+  if(!s) return null;
+  const keys = Object.keys(s);
+  const tKey = keys.find(k => typeof s[k]==="string" && !isNaN(Date.parse(s[k])));
+  const vKey = keys.find(k => typeof s[k]==="number" && !/error|qc|quality|flag|code/i.test(k));
+  return (tKey && vKey) ? {tKey, vKey} : null;
+}
+function collectSeries(node, out){
+  if(Array.isArray(node)){
+    const meta = looksLikeObs(node);
+    if(meta){
+      const pts = node.map(o => ({t:new Date(o[meta.tKey]), v:o[meta.vKey]}))
+                      .filter(p => !isNaN(p.t) && typeof p.v==="number")
+                      .sort((a,b)=>a.t-b.t);
+      if(pts.length) out.push(pts);
+    } else node.forEach(n => collectSeries(n, out));
+  } else if(node && typeof node==="object"){
+    Object.values(node).forEach(v => collectSeries(v, out));
+  }
+}
+
+const fmt = new Intl.DateTimeFormat([], {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"});
+const setStatus = (msg, isErr) => {
+  const el = document.getElementById("status");
+  el.className = "status" + (isErr ? " err" : "");
+  el.innerHTML = msg;
+};
+
+async function load(){
+  try{
+    const res = await fetch(ENDPOINT, {headers:{Accept:"application/json"}});
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+
+    const all = [];
+    collectSeries(json, all);
+    if(!all.length) throw new Error("No observations in response");
+    const series = all.sort((a,b)=>b.length-a.length)[0]; // richest series
+
+    const last = series[series.length-1];
+    const vals = series.map(p=>p.v);
+    document.getElementById("temp").textContent = last.v.toFixed(1);
+    document.getElementById("updated").textContent = "Last reading " + fmt.format(last.t);
+    document.getElementById("min").textContent = Math.min(...vals).toFixed(1) + "°";
+    document.getElementById("max").textContent = Math.max(...vals).toFixed(1) + "°";
+    document.getElementById("count").textContent = series.length;
+
+    new Chart(document.getElementById("chart"), {
+      type:"line",
+      data:{
+        labels: series.map(p=>p.t),
+        datasets:[{
+          data: series.map(p=>p.v),
+          borderColor:"#38e0c4", borderWidth:2, pointRadius:0, tension:.25,
+          fill:true,
+          backgroundColor:(c)=>{
+            const {ctx,chartArea}=c.chart; if(!chartArea) return "transparent";
+            const g=ctx.createLinearGradient(0,chartArea.top,0,chartArea.bottom);
+            g.addColorStop(0,"rgba(56,224,196,.28)"); g.addColorStop(1,"rgba(56,224,196,0)");
+            return g;
+          }
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{intersect:false, mode:"index"},
+        plugins:{legend:{display:false}, tooltip:{
+          callbacks:{
+            title:(i)=>fmt.format(new Date(i[0].parsed.x)),
+            label:(i)=>i.parsed.y.toFixed(1)+" °C"
+          }
+        }},
+        scales:{
+          x:{type:"time"===undefined?"category":"category",
+             ticks:{color:"#7fa0a2", maxTicksLimit:6, autoSkip:true,
+               callback:function(val,idx){const d=this.getLabelForValue(val);
+                 return new Intl.DateTimeFormat([], {day:"numeric",month:"short"}).format(new Date(d));}},
+             grid:{color:"rgba(28,58,64,.5)"}},
+          y:{ticks:{color:"#7fa0a2", callback:v=>v+"°"}, grid:{color:"rgba(28,58,64,.5)"}}
+        }
+      }
+    });
+
+    setStatus("Live from GeoNet Tilde · " + series.length + " samples over 30 days", false);
+  }catch(err){
+    console.error(err);
+    setStatus("Couldn’t reach the Tilde API (" + err.message + "). "
+      + "If this is a CORS block, serve through a small proxy — see notes.", true);
+  }
+}
+load();
+</script>
+</body>
+</html>
