@@ -47,6 +47,14 @@
   .stat .v{font-family:ui-monospace,monospace;font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
   .status{font-size:12px;color:var(--muted);text-align:center}
   .status.err{color:var(--warn)}
+  .range{display:flex;align-items:center;gap:8px}
+  .range label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  select#range{
+    background:var(--panel);color:var(--ink);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font-size:13px;font-family:inherit;
+    appearance:none;-webkit-appearance:none;cursor:pointer;
+  }
+  select#range:disabled{opacity:.6;cursor:default}
   footer{font-size:11px;color:var(--muted);text-align:center;line-height:1.5}
   a{color:var(--accent);text-decoration:none}
   .spinner{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;display:inline-block;vertical-align:-3px;animation:spin .8s linear infinite;margin-right:8px}
@@ -68,9 +76,20 @@
     <div class="updated" id="updated">&nbsp;</div>
   </div>
 
+  <div class="range">
+    <label for="range">🗓 Time range
+      <select id="range">
+        <option value="7d">7 days</option>
+        <option value="30d" selected>30 days</option>
+        <option value="90d">90 days</option>
+        <option value="365d">1 year</option>
+      </select>
+    </label>
+  </div>
+
   <div class="stats">
-    <div class="stat"><div class="k">30-day min</div><div class="v" id="min">—</div></div>
-    <div class="stat"><div class="k">30-day max</div><div class="v" id="max">—</div></div>
+    <div class="stat"><div class="k">Min</div><div class="v" id="min">—</div></div>
+    <div class="stat"><div class="k">Max</div><div class="v" id="max">—</div></div>
     <div class="stat"><div class="k">Samples</div><div class="v" id="count">—</div></div>
   </div>
 
@@ -86,7 +105,9 @@
   </footer>
 
 <script>
-const ENDPOINT = "https://tilde.geonet.org.nz/v3/data/envirosensor/RU001/lake-temperature/-/snapshot/-/latest/30d";
+const endpointFor = (duration) =>
+  `https://tilde.geonet.org.nz/v3/data/envirosensor/RU001/lake-temperature/-/snapshot/-/latest/${duration}`;
+const RANGE_LABELS = {"7d":"7 days", "30d":"30 days", "90d":"90 days", "365d":"1 year"};
 
 // --- Defensive parser: works regardless of exact JSON key names (v3/v4 tolerant) ---
 // Finds every array of observation-like objects (a parseable date field + a numeric field),
@@ -121,14 +142,19 @@ const setStatus = (msg, isErr) => {
   el.innerHTML = msg;
 };
 
-async function load(){
+let chart;
+
+async function load(duration){
   if(typeof Chart === "undefined"){
     setStatus("Chart.js failed to load from the CDN (blocked by an ad blocker, extension, or network filter?). "
       + "Allow cdn.jsdelivr.net and reload.", true);
     return;
   }
+  const rangeSelect = document.getElementById("range");
+  rangeSelect.disabled = true;
+  setStatus("<span class=\"spinner\"></span>Loading data…", false);
   try{
-    const res = await fetch(ENDPOINT, {headers:{Accept:"application/json"}});
+    const res = await fetch(endpointFor(duration), {headers:{Accept:"application/json"}});
     if(!res.ok) throw new Error("HTTP " + res.status);
     const json = await res.json();
 
@@ -145,7 +171,8 @@ async function load(){
     document.getElementById("max").textContent = Math.max(...vals).toFixed(1) + "°";
     document.getElementById("count").textContent = series.length;
 
-    new Chart(document.getElementById("chart"), {
+    if(chart) chart.destroy();
+    chart = new Chart(document.getElementById("chart"), {
       type:"line",
       data:{
         labels: series.map(p=>p.t),
@@ -181,14 +208,18 @@ async function load(){
       }
     });
 
-    setStatus("Live from GeoNet Tilde · " + series.length + " samples over 30 days", false);
+    setStatus("Live from GeoNet Tilde · " + series.length + " samples over " + RANGE_LABELS[duration], false);
   }catch(err){
     console.error(err);
     setStatus("Couldn’t reach the Tilde API (" + err.message + "). "
       + "If this is a CORS block, serve through a small proxy — see notes.", true);
+  }finally{
+    rangeSelect.disabled = false;
   }
 }
-load();
+
+document.getElementById("range").addEventListener("change", (e) => load(e.target.value));
+load(document.getElementById("range").value);
 </script>
 </body>
 </html>
