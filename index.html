@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="theme-color" content="#0c1a1d" />
 <title>Te Wai ā-moe — Lake Temperature</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
   :root{
     --bg:#0c1a1d; --panel:#102428; --line:#1c3a40;
@@ -122,6 +122,11 @@ const setStatus = (msg, isErr) => {
 };
 
 async function load(){
+  if(typeof Chart === "undefined"){
+    setStatus("Chart.js failed to load from the CDN (blocked by an ad blocker, extension, or network filter?). "
+      + "Allow cdn.jsdelivr.net and reload.", true);
+    return;
+  }
   try{
     const res = await fetch(ENDPOINT, {headers:{Accept:"application/json"}});
     if(!res.ok) throw new Error("HTTP " + res.status);
